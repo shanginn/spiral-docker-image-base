@@ -14,6 +14,13 @@ FROM ghcr.io/roadrunner-server/roadrunner:$RR_VERSION AS roadrunner
 
 FROM php:${PHP_VERSION}-cli-alpine AS base
 
+ARG GROUP_ID
+ARG USER
+ARG GROUP
+
+RUN addgroup -g $GROUP_ID $USER
+RUN adduser -u $GROUP_ID -G $GROUP -s /bin/sh -D $GROUP
+
 COPY --from=roadrunner /usr/bin/rr /usr/local/bin/
 COPY --from=composer /usr/bin/composer /usr/local/bin/
 
@@ -27,11 +34,6 @@ RUN apk add --no-cache bash less \
         pdo_pgsql redis pcntl sockets gd zip pcov \
         grpc-$GRPC_VERSION \
         protobuf-$PROTOBUF_VERSION
-
-ARG GROUP_ID
-
-RUN addgroup -g $GROUP_ID $USER
-RUN adduser -u $GROUP_ID -G $GROUP -s /bin/sh -D $GROUP
 
 WORKDIR /var/www/app
 VOLUME /var/www/app
