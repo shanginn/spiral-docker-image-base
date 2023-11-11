@@ -41,4 +41,4 @@ VOLUME /var/www/app
 FROM base AS base-xdebug
 
 ARG XDEBUG_VERSION
-RUN install-php-extensions xdebug-$XDEBUG_VERSION
+RUN install-php-extensions xdebug-$XDEBUG_VERSION xhprof
