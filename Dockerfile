@@ -29,9 +29,9 @@ COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr
 ARG GRPC_VERSION
 ARG PROTOBUF_VERSION
 
-RUN apk add --no-cache bash less \
+RUN apk add --no-cache bash less git \
     && install-php-extensions \
-        pdo_pgsql redis pcntl sockets gd zip pcov git \
+        pdo_pgsql redis pcntl sockets gd zip pcov \
         grpc-$GRPC_VERSION \
         protobuf-$PROTOBUF_VERSION
 
