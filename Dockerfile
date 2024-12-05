@@ -1,9 +1,9 @@
-ARG PHP_VERSION=8.3
+ARG PHP_VERSION=8.4
 ARG COMPOSER_VERSION=latest
 ARG RR_VERSION=2024.2.1
-ARG GRPC_VERSION=1.67.0
-ARG PROTOBUF_VERSION=4.27.5
-ARG XDEBUG_VERSION=3.3.2
+ARG GRPC_VERSION=1.68.0
+ARG PROTOBUF_VERSION=4.29.1
+ARG XDEBUG_VERSION=3.4.0
 
 ARG GROUP_ID=1337
 ARG USER=som
@@ -31,7 +31,7 @@ ARG PROTOBUF_VERSION
 
 RUN apk add --no-cache bash less \
     && install-php-extensions \
-        pdo_pgsql redis pcntl sockets gd zip pcov \
+        pdo_pgsql redis pcntl sockets gd zip pcov git \
         grpc-$GRPC_VERSION \
         protobuf-$PROTOBUF_VERSION
 
