@@ -8,155 +8,104 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  REGISTRY_IMAGE: ${{ github.repository }}
 
 jobs:
-  build-platform:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-
     strategy:
       fail-fast: false
       matrix:
         platform:
           - linux/amd64
           - linux/arm64
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          cosign-release: 'v2.2.3'
+          images: ${{ env.REGISTRY_IMAGE }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        id: buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log into registry ${{ env.REGISTRY }}
-        uses: docker/login-action@v3
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive artifact suffix
-        id: derive_suffix
-        run: |
-          platform_suffix=$(echo "${{ matrix.platform }}" | tr '/' '-')
-          echo "artifact_suffix=base-${platform_suffix}" >> $GITHUB_ENV
-
-      - name: Extract Docker metadata for platform build
-        id: meta_platform
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=base-{{platform}}-
-
-      - name: Build and push image by digest
-        id: build-and-push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          target: base
           platforms: ${{ matrix.platform }}
-          push: true # Always push since we're not on a PR
-          tags: ${{ steps.meta_platform.outputs.tags }}
-          labels: ${{ steps.meta_platform.outputs.labels }}
-          # Outputs will include digest, and push is true
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.REGISTRY_IMAGE }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Sign the published Docker image
-        if: steps.build-and-push.outputs.digest
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-          IMAGE_TO_SIGN: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
-        run: |
-          echo "Signing image: ${IMAGE_TO_SIGN}"
-          cosign sign --yes "${IMAGE_TO_SIGN}"
-
       - name: Export digest
-        if: steps.build-and-push.outputs.digest
         run: |
-          mkdir -p /tmp/digests
-          echo "${{ steps.build-and-push.outputs.digest }}" > /tmp/digests/digest-${{ env.artifact_suffix }}.txt
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
-      - name: Upload digest artifact
-        if: steps.build-and-push.outputs.digest
+      - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digest-${{ env.artifact_suffix }}
-          path: /tmp/digests/digest-${{ env.artifact_suffix }}.txt
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
-  publish-manifest:
+  merge:
     runs-on: ubuntu-latest
-    needs: build-platform
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: read
-      packages: write
-
+    needs:
+      - build
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all digest artifacts
+      - name: Download digests
         uses: actions/download-artifact@v4
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log into registry ${{ env.REGISTRY }}
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata for final image
-        id: meta_final
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY_IMAGE }}
           tags: |
-            type=schedule
-            type=ref,event=branch,branch=master
-            type=ref,event=tag
-            type=sha,event=push,format=long
-            type=match,pattern=master,group=0,value=latest,event=branch
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
-      - name: Create and push manifest list
-        env:
-          DOCKER_METADATA_OUTPUT_JSON: ${{ steps.meta_final.outputs.json }}
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
         run: |
-          echo "Digests for 'base' target:"
-          ls -l /tmp/digests/digest-base-*.txt
-          cat /tmp/digests/digest-base-linux-amd64.txt || echo "AMD64 digest file not found"
-          cat /tmp/digests/digest-base-linux-arm64.txt || echo "ARM64 digest file not found"
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
 
-          if [ ! -f /tmp/digests/digest-base-linux-amd64.txt ] || [ ! -f /tmp/digests/digest-base-linux-arm64.txt ]; then
-            echo "::error::Required digest files for 'base' target are missing."
-            exit 1
-          fi
-          
-          echo "Creating manifest for image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} with tags:"
-          echo "${DOCKER_METADATA_OUTPUT_JSON}" | jq -r '.tags | .[]'
-
-          docker buildx imagetools create \
-            $(echo "$DOCKER_METADATA_OUTPUT_JSON" | jq -cr '.tags | map("-t " + .) | join(" ")') \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$(cat /tmp/digests/digest-base-linux-amd64.txt)" \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$(cat /tmp/digests/digest-base-linux-arm64.txt)"
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
