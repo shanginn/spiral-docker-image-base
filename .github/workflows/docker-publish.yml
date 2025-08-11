@@ -29,8 +29,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
-            # push main branch as type=edge
-            type=edge,branch=master
+            # push main branch as type=master
+            type=master,branch=master
             # push semantic version tags
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
