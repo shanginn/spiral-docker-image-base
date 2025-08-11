@@ -29,12 +29,14 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
-            # push main branch as type=master
-            type=master,branch=master
+            # Push "master" tag for pushes to the master branch
+            type=ref,event=branch 
+            
             # push semantic version tags
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            # push latest tag for default branch
+            
+            # push latest tag for the default branch
             type=schedule,pattern=latest,branch=master
 
       - name: Login to GitHub Container Registry
